@@ -1,10 +1,12 @@
-// 谜条编辑：表单 + 实时谜格校验面板 + 重复提示
+// 谜条编辑：表单 + 实时谜格校验面板 + 人工复核 + 重复提示
 import { useMemo, useState } from 'react';
 import { useAppState, navigate } from '../ui/router';
 import { VerdictBadge } from '../ui/bits';
 import { validateRiddle, FORMAT_RULE_BRIEF, FORMAT_AUTO_CAPABILITY } from '../lib/validate';
+import { reviewConflicts, reviewStale } from '../lib/review';
 import { findSimilar } from '../lib/duplicates';
-import { CATEGORY_LABEL, FORMAT_LABEL, AGE_LABEL, type AgeGroup, type RiddleCategory, type RiddleFormat } from '../types';
+import { formatDateTime } from '../lib/format';
+import { CATEGORY_LABEL, FORMAT_LABEL, AGE_LABEL, VERDICT_LABEL, type AgeGroup, type ReviewVerdict, type RiddleCategory, type RiddleFormat } from '../types';
 import { store } from '../lib/store';
 
 interface RiddleLite {
@@ -35,7 +37,13 @@ export function RiddleEdit({ id }: { id: string }) {
   });
   const [saved, setSaved] = useState('');
 
-  const set = (patch: Partial<RiddleLite>) => { setDraft((d) => ({ ...d, ...patch })); setSaved(''); };
+  // 人工复核表单
+  const [rvVerdict, setRvVerdict] = useState<ReviewVerdict>(() => existing?.check.review?.verdict ?? 'pass');
+  const [rvReason, setRvReason] = useState(() => existing?.check.review?.reason ?? '');
+  const [rvReviewer, setRvReviewer] = useState(() => existing?.check.review?.reviewer ?? '');
+  const [rvMsg, setRvMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const set = (patch: Partial<RiddleLite>) => { setDraft((d) => ({ ...d, ...patch })); setSaved(''); setRvMsg(null); };
 
   const check = useMemo(
     () => validateRiddle({ surface: draft.surface, answer: draft.answer, category: draft.category, format: draft.format }, state.ctx),
@@ -72,6 +80,31 @@ export function RiddleEdit({ id }: { id: string }) {
     if (!confirm(`确定删除谜号 ${existing.no}「${existing.surface}」？`)) return;
     await store.removeRiddles([existing.id]);
     navigate('#/');
+  };
+
+  // ---- 人工复核 ----
+  const review = existing?.check.review ?? null;
+  const stale = existing ? reviewStale(existing) : false;
+  const conflict = existing ? reviewConflicts(existing) : false;
+  const dirty = !!existing && (
+    draft.surface.trim() !== existing.surface || draft.answer.trim() !== existing.answer ||
+    draft.category !== existing.category || draft.format !== existing.format
+  );
+
+  const submitReview = async () => {
+    if (!existing) return;
+    try {
+      const r = await store.reviewRiddle(existing.id, { verdict: rvVerdict, reason: rvReason, reviewer: rvReviewer });
+      setRvMsg({ ok: true, text: `已记录人工判定「${VERDICT_LABEL[r.check.review!.verdict]}」，重新校验时保留。` });
+    } catch (e) {
+      setRvMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const revokeReview = async () => {
+    if (!existing) return;
+    await store.clearReview(existing.id);
+    setRvMsg({ ok: true, text: '已撤销人工判定，结论回到自动校验结果。' });
   };
 
   if (id !== 'new' && !existing) {
@@ -153,12 +186,74 @@ export function RiddleEdit({ id }: { id: string }) {
         </div>
 
         <div className="panel">
-          <h3>谜格校验 <VerdictBadge verdict={check.verdict} size="lg" /></h3>
+          <h3>谜格校验（自动） <VerdictBadge verdict={check.verdict} size="lg" /></h3>
           <ul className={`check-list check-${check.verdict}`}>
             {check.reasons.map((r, i) => <li key={i}>{r}</li>)}
             {check.reasons.length === 0 && <li>暂无校验信息</li>}
           </ul>
           <p className="muted small">自动判定能力：{FORMAT_AUTO_CAPABILITY[draft.format]}</p>
+
+          <h3>
+            人工复核{' '}
+            {review && !stale && <VerdictBadge verdict={review.verdict} size="lg" />}
+            {review && stale && <span className="badge badge-warn">原判定已失效</span>}
+          </h3>
+          {!existing ? (
+            <p className="muted small">保存后可在此对校验结论做人工复核（判为通过 / 改判不通过，需填写理由与署名）。</p>
+          ) : (
+            <>
+              {review && (
+                <div className={`review-block${stale ? ' review-stale' : ''}`}>
+                  <p>
+                    <VerdictBadge verdict={review.verdict} />{' '}
+                    <b>{review.reviewer}</b> 判于 {formatDateTime(review.at)}
+                  </p>
+                  <p>理由：{review.reason}</p>
+                  {conflict && (
+                    <p className="warn-text small">与自动结论「{VERDICT_LABEL[existing.check.verdict]}」不一致，当前以人工判定为准。</p>
+                  )}
+                  {stale && (
+                    <p className="muted small">判定后谜面 / 谜底 / 谜目 / 谜格已变更，人工结论已回退为自动结果；可撤销该记录或重新判定。</p>
+                  )}
+                  <button className="btn btn-ghost btn-sm" onClick={() => void revokeReview()}>
+                    {stale ? '清除失效记录' : '撤销人工判定（回到自动结果）'}
+                  </button>
+                </div>
+              )}
+              {dirty && review && !stale && (
+                <p className="warn-text small">有未保存的内容修改：保存后当前人工判定将失效，需要重新判定。</p>
+              )}
+              <div className="review-form">
+                <div className="btn-row">
+                  <label className="check-inline">
+                    <input type="radio" checked={rvVerdict === 'pass'} onChange={() => setRvVerdict('pass')} />
+                    判为通过
+                  </label>
+                  <label className="check-inline">
+                    <input type="radio" checked={rvVerdict === 'fail'} onChange={() => setRvVerdict('fail')} />
+                    改判不通过
+                  </label>
+                </div>
+                <label className="field">
+                  <span>判定理由 <b className="bad-text">*</b></span>
+                  <input className="input" value={rvReason} onChange={(e) => { setRvReason(e.target.value); setRvMsg(null); }}
+                    placeholder="例：「本日」倒读扣「今天」成立，经确认无问题" />
+                </label>
+                <label className="field">
+                  <span>署名 <b className="bad-text">*</b></span>
+                  <input className="input" value={rvReviewer} onChange={(e) => { setRvReviewer(e.target.value); setRvMsg(null); }}
+                    placeholder="判定人姓名（老师傅）" />
+                </label>
+                <div className="btn-row">
+                  <button className="btn btn-primary" onClick={() => void submitReview()}>
+                    {review && !stale ? '重新判定（覆盖原结论）' : '提交人工判定'}
+                  </button>
+                  {rvMsg && <span className={rvMsg.ok ? 'ok-text small' : 'bad-text small'}>{rvMsg.text}</span>}
+                </div>
+                <p className="muted small">人工判定在「保存谜条 / 重新校验全部谜格」后保留；与自动结论不一致的条目可在谜库页按「人工改判」筛出。</p>
+              </div>
+            </>
+          )}
 
           <h3>重复检测</h3>
           {dups.length === 0 ? (

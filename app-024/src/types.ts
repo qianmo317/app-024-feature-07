@@ -7,6 +7,18 @@ export type RiddleCategory = 'char' | 'object' | 'idiom' | 'place' | 'person' | 
 export type AgeGroup = 'child' | 'teen' | 'adult' | 'all';
 export type Verdict = 'pass' | 'suspect' | 'fail';
 
+/** 人工复核结论：判为通过 / 改判不通过（人工不下「存疑」，存疑只是自动的未决态） */
+export type ReviewVerdict = 'pass' | 'fail';
+
+/** 人工复核记录：谁判的、什么时候、为什么；basis 为判定时的内容指纹，用于识别判定后内容被改 */
+export type ManualReview = {
+  verdict: ReviewVerdict;
+  reason: string;        // 判定理由（必填）
+  reviewer: string;      // 署名（必填）
+  at: number;            // 判定时间
+  basis: string;         // 判定时 谜面/谜底/谜目/谜格 的指纹（reviewBasisOf）
+};
+
 export type Riddle = {
   id: string;
   no: number;            // 谜号（现场对号、谜条大字）
@@ -21,7 +33,10 @@ export type Riddle = {
   ageGroup?: AgeGroup;
   tags: string[];
   note?: string;
-  check: { verdict: Verdict; reasons: string[]; checkedAt: number };
+  check: {
+    verdict: Verdict; reasons: string[]; checkedAt: number;  // 自动结论：每次保存/重算都刷新
+    review?: ManualReview | null;                            // 人工复核：重算时保留，可撤销
+  };
 };
 
 export type OnsiteRecord = {

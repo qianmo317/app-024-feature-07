@@ -19,10 +19,11 @@
 ## 4. 核心功能（MVP）
 1. **谜库管理**：谜面、谜底、谜目（6 类）、谜格（9 种）、谜格补充说明、作者、出处、难度（1~3 星）、适用年龄、标签、备注；谜号自动取 `max(no)+1`（`store.ts:89-91`）。
 2. **谜格校验**：`validateRiddle(surface, answer, category, format, ctx)` 一格一条规则，输出 `verdict`（通过 / 存疑 / 不通过）＋ `reasons`（`validate.ts:28-188`）。通用部分校验谜目字数：猜一字应 1 字、成语应 4 字（`validate.ts:50-55`）。
-3. **重复检测**：谜面归一化后算相似度，同谜目且 ≥ 0.85 判重（`duplicates.ts:5`）；编辑页实时列候选，列表页可全库扫描并列出相似对。
-4. **出条打印**：按选定范围生成 A4 谜条，卡片尺寸与每页条数可配（4/6/8/9/12 条，`PrintPage.tsx:52`），带裁切线，支持「同页双联回收联」（谜号 + 谜底 + 猜中者填写栏）与主办方落款；超出版面自动缩小并给出告警文案（`print.ts:45-47`）。
-5. **现场登记**：大输入框按谜号登记「猜中者 / 奖项 / 备注」（`Onsite.tsx:110-121`），重复登记当场拦截；长按 0.6 秒快速登记（用第一个奖项，`Onsite.tsx:63-70`）；实时统计总数 / 已猜中 / 剩余 / 奖品发放（`store.ts:241-249`）；兑奖号码按登记时间顺序从 `DJ-0001` 起生成（`store.ts:215-227`）。
-6. **导入导出**：谜库与登记表导出 UTF-8 with BOM 的 CSV（`csv.ts:44`，Excel 打开不乱码）；导入走两步式预览，分为新增 / 重复 / 格式错误三类，确认后才写库（`csv.ts:121-173`）。
+3. **校验人工复核**：对存疑（或不认可自动结论）的条目，编辑页可判为通过 / 改判不通过，必填理由与署名（`store.ts:reviewRiddle`）；判定记录含判定人、时间、理由与内容指纹，保存与「重新校验全部」重算自动结论时人工结论保留、生效结论以人工为准（`review.ts`）；判定后再改谜面/谜底/谜目/谜格则判定失效回退自动结论（记录保留，可撤销或重判）；与自动结论不一致的条目在谜库页按「人工改判」筛出。
+4. **重复检测**：谜面归一化后算相似度，同谜目且 ≥ 0.85 判重（`duplicates.ts:5`）；编辑页实时列候选，列表页可全库扫描并列出相似对。
+5. **出条打印**：按选定范围生成 A4 谜条，卡片尺寸与每页条数可配（4/6/8/9/12 条，`PrintPage.tsx:52`），带裁切线，支持「同页双联回收联」（谜号 + 谜底 + 猜中者填写栏）与主办方落款；超出版面自动缩小并给出告警文案（`print.ts:45-47`）。
+6. **现场登记**：大输入框按谜号登记「猜中者 / 奖项 / 备注」（`Onsite.tsx:110-121`），重复登记当场拦截；长按 0.6 秒快速登记（用第一个奖项，`Onsite.tsx:63-70`）；实时统计总数 / 已猜中 / 剩余 / 奖品发放（`store.ts:241-249`）；兑奖号码按登记时间顺序从 `DJ-0001` 起生成（`store.ts:215-227`）。
+7. **导入导出**：谜库与登记表导出 UTF-8 with BOM 的 CSV（`csv.ts:44`，Excel 打开不乱码）；导入走两步式预览，分为新增 / 重复 / 格式错误三类，确认后才写库（`csv.ts:121-173`）。
 
 ## 5. 进阶功能
 - 多维筛选 + 全文搜索：谜目、谜格、难度、校验结果、标签五个下拉加一个搜索框；搜索覆盖谜面 / 谜底 / 作者 / 出处 / 谜号 / 标签，中文查询额外走归一化（去标点、繁转简，`search.ts:27-37`）。
@@ -53,7 +54,9 @@ type Riddle = {
   format: 'none'|'qiqian'|'juanlian'|'xufei'|'lihua'|'baitou'|'fendi'|'shanglou'|'xialou';
   formatNote?: string; author?: string; source?: string; note?: string;
   difficulty: 1|2|3; ageGroup?: 'child'|'teen'|'adult'|'all'; tags: string[];
-  check: { verdict: 'pass'|'suspect'|'fail'; reasons: string[]; checkedAt: number };
+  check: { verdict: 'pass'|'suspect'|'fail'; reasons: string[]; checkedAt: number;
+           review?: { verdict: 'pass'|'fail'; reason: string; reviewer: string; at: number; basis: string } | null };
+  // review = 人工复核：重算自动结论时保留；basis 为判定时内容指纹，内容变更则判定失效回退自动结论
 };
 type OnsiteRecord = { id: string; riddleId: string; winnerName?: string; winnerRef?: string;
                       prize: string; at: number; note?: string; code?: string };
@@ -80,7 +83,7 @@ type AppSettings  = { event: EventInfo; print: PrintSetup; prizes: string[] };
 - **A4 排版计算**：常量 A4 210×297mm、页边距 10mm、卡间距 4mm（`print.ts:4-7`）；先把 `perPage` 钳到 1~12，再枚举列数 1~6、行数 `ceil(want/cols)`，取「卡片面积最大」的组合，卡片尺寸取配置值与可用区均分的较小值；被缩小时置 `adjusted` 并生成告警文案（`print.ts:29-62`）。
 - **离线数据加载**：`loadDataCtx(BASE_URL)` 并行 fetch 三个 JSON，任一失败不抛错，而是记 `loadError` 并保持 `loaded=false`，顶栏显示「校验数据未加载」（`datafiles.ts:17-36`、`App.tsx:50-52`）。谐音索引惰性构建，按 `DataCtx` 用 WeakMap 缓存（`validate.ts:13-18`）。
 - **CSV 解析**：状态机支持 BOM、CRLF、引号内逗号 / 换行 / 双引号转义（`csv.ts:9-33`），导出统一 `\r\n` 行尾（`csv.ts:39`）。导入预览对「文件内重复」与「与库内重复」分别判定，后者先查归一化全等、再按同谜目算相似度（`csv.ts:140-172`）。
-- **状态管理**：单例 class + `useSyncExternalStore`（`store.ts:35-57`、`router.ts:44-46`），写操作先改内存、再落 IndexedDB、后 emit；`saveRiddle` 保存时同步重算谜格校验并写 `checkedAt`（`store.ts:94-116`）。
+- **状态管理**：单例 class + `useSyncExternalStore`（`store.ts:35-57`、`router.ts:44-46`），写操作先改内存、再落 IndexedDB、后 emit；`saveRiddle` 保存时同步重算谜格校验并写 `checkedAt`，同时保留人工复核结论（`store.ts:94-117`）；`recheckAll` 只刷新自动结论并返回人工复核保留/不一致统计，`reviewRiddle`/`clearReview` 负责人工判定与撤销。
 - **性能**：筛选与查重都写成纯函数便于基准测试，2000 条谜库的带条件筛选、空筛选全量返回、单条查重均有 < 100ms 断言（`perf.test.ts:23,33,41`）；打印预览对第 3 页之后的 `.sheet` 用 `content-visibility: auto` 降低渲染开销（`PrintPage.tsx:83`）。
 
 ## 9. 交互与视觉要点
@@ -93,7 +96,7 @@ type AppSettings  = { event: EventInfo; print: PrintSetup; prizes: string[] };
 - 打印时隐藏顶栏、页脚、工具条与页面标题，每张 `.sheet` 后强制分页、最后一页不分页（`styles.css:232-244`）。
 
 ## 10. 验收标准
-- **单元测试 106 例全通过**：谜格校验 49、CSV 25、重复检测 13、打印版式 9、离线数据 7、性能 3（`npx vitest run` 输出 `Tests 106 passed`）。
+- **单元测试 119 例全通过**：谜格校验 49、人工复核 13、CSV 25、重复检测 13、打印版式 9、离线数据 7、性能 3（`npx vitest run` 输出 `Tests 119 passed`）。
 - **E2E 19 例**覆盖：导入示例 53 条（预览显示「新增 53 / 格式错误 0」）→ 校验徽标（秋千格正例存疑、误例不通过、无格正例通过）→ 批量选 3 条出条（`.sheet` 1 页、`.card` 3 张、回收联含「猜中者姓名」、谜面计算字号 ≥ 18.5px ≈ 14pt）→ 现场登记与重复登记提示 → 兑奖号码 `DJ-0001` → 谜库导出 CSV 断言前三字节 `EF BB BF` → 300 条谜条 = 50 页 × 6 条且首卡 `data-no=1`、末卡 `data-no=300` → 断网登记 3 条后直接读 IndexedDB 计数为 3、刷新后仍在 → 全程 console 无 error（`tests/e2e/app.spec.ts`）。
 - **性能**：2000 条谜库带条件筛选、空筛选全量返回、单条查重均 < 100ms（`tests/perf.test.ts`）。
 - **排版**：每页 6 条 = 3 列 × 2 行、9 条 = 3 列 × 3 行、12 条不越界、`perPage=0` 钳为 1、63×135mm 在 6 条/页时宽度受限自动缩小并告警、超大卡片缩小后不超 A4 可用区（`tests/print-layout.test.ts`）。
@@ -104,9 +107,8 @@ type AppSettings  = { event: EventInfo; print: PrintSetup; prizes: string[] };
 不做在线猜谜答题与排行榜、不做投票问卷与开奖抽奖系统、不做电商兑奖与积分商城、不做社交分享与活动社区，也不做多人协同与云端同步——核心只做**谜库管理 + 谜格校验 + 谜条打印 + 现场登记**。
 
 ### 已知实现边界
-- README「测试」表写「谜格校验 48 例」，实际 `tests/validate.test.ts` 为 **49 例**（`README.md:144`）；单元测试总数 106 与 E2E 19 与代码一致。
 - README 写「重新生成：`node scripts/gen-data.mjs`（源数据 URL 见脚本注释）」，但脚本注释只有数据源名（pinyin-data、Make Me a Hanzi）没有 URL，且脚本从 `process.argv[2]/[3]` 读本地文本文件、本身不下载数据（`scripts/gen-data.mjs:1-9`）。
-- `npm test` 即 `vitest run`，项目没有 vitest 配置文件，默认 include 会把 `tests/e2e/app.spec.ts` 一并收集，该文件收集失败使整条命令以**退出码 1**结束（106 个单元用例本身全通过）。
+- `npm test` 即 `vitest run`，项目没有 vitest 配置文件，默认 include 会把 `tests/e2e/app.spec.ts` 一并收集，该文件收集失败使整条命令以**退出码 1**结束（119 个单元用例本身全通过）。
 - **镜像内不含 `nginx.conf`**：`.dockerignore` 排除了它（`.dockerignore:12`），Dockerfile 只拷 `dist/`（`Dockerfile:11`），配置靠 compose 只读卷挂载（`docker-compose.yml:9`）。脱离 compose 直接 `docker run` 该镜像时用的是 nginx 默认配置，没有 `/healthz`、SPA 回退与 gzip 策略。
 - `OnsiteRecord.winnerRef` 与登记表 CSV 的「联系方式」列存在（`types.ts:31`、`Settings.tsx:38`），但现场登记页没有该输入项，导出时该列恒为空。
 - `EventInfo.riddleIds` 会被维护（删谜条时过滤、清空时置空，`store.ts:151,159`），但没有任何界面往里添加，活动清单始终是空数组。

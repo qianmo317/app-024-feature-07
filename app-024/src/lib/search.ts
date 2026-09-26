@@ -1,13 +1,14 @@
 // 谜库筛选（性能：2000 条 < 100ms，纯函数便于基准测试）
 import type { Riddle, RiddleCategory, RiddleFormat, Verdict } from '../types';
 import { normalizeText } from './normalize';
+import { effectiveVerdict, reviewConflicts } from './review';
 
 export interface RiddleFilters {
   q: string;
   category: RiddleCategory | '';
   format: RiddleFormat | '';
   difficulty: 0 | 1 | 2 | 3; // 0 = 全部
-  verdict: Verdict | '';
+  verdict: Verdict | '' | 'conflict'; // conflict = 人工改判（与自动结论不一致）
   tag: string;
 }
 
@@ -22,7 +23,9 @@ export function filterRiddles(list: Riddle[], f: RiddleFilters): Riddle[] {
     if (f.category && r.category !== f.category) continue;
     if (f.format && r.format !== f.format) continue;
     if (f.difficulty && r.difficulty !== f.difficulty) continue;
-    if (f.verdict && r.check.verdict !== f.verdict) continue;
+    // 校验筛选按「生效结论」（人工判定优先）；conflict 单独列出人工与自动不一致的条目
+    if (f.verdict === 'conflict') { if (!reviewConflicts(r)) continue; }
+    else if (f.verdict && effectiveVerdict(r) !== f.verdict) continue;
     if (f.tag && !r.tags.includes(f.tag)) continue;
     if (q) {
       if (

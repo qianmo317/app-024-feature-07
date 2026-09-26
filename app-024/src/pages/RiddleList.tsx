@@ -7,6 +7,7 @@ import { scanDuplicates, type DupMatch } from '../lib/duplicates';
 import { importPreview, riddleToRow, stringifyCSV, withBOM, RIDDLE_CSV_HEADERS, type ImportPreview } from '../lib/csv';
 import { CATEGORY_LABEL, FORMAT_LABEL, VERDICT_LABEL, type Riddle, type Verdict } from '../types';
 import { downloadText, formatDateTime } from '../lib/format';
+import { effectiveVerdict, hasActiveReview } from '../lib/review';
 import { exportFileName, store } from '../lib/store';
 
 const PAGE_SIZE = 50;
@@ -124,6 +125,7 @@ export function RiddleList() {
         <select className="input" value={filters.verdict} onChange={(e) => setF({ verdict: e.target.value as RiddleFilters['verdict'] })}>
           <option value="">全部校验</option>
           {(Object.keys(VERDICT_LABEL) as Verdict[]).map((k) => <option key={k} value={k}>{VERDICT_LABEL[k]}</option>)}
+          <option value="conflict">人工改判（与自动不一致）</option>
         </select>
         {tags.length > 0 && (
           <select className="input" value={filters.tag} onChange={(e) => setF({ tag: e.target.value })}>
@@ -251,7 +253,17 @@ export function RiddleList() {
                     <td>{CATEGORY_LABEL[r.category]}</td>
                     <td>{r.format === 'none' ? '' : FORMAT_LABEL[r.format]}</td>
                     <td><Stars n={r.difficulty} /></td>
-                    <td><VerdictBadge verdict={r.check.verdict} /></td>
+                    <td>
+                      <VerdictBadge verdict={effectiveVerdict(r)} />
+                      {hasActiveReview(r) && (
+                        <span
+                          className="badge badge-review"
+                          title={`人工判定「${VERDICT_LABEL[r.check.review!.verdict]}」· ${r.check.review!.reviewer} · ${formatDateTime(r.check.review!.at)}`}
+                        >
+                          人工
+                        </span>
+                      )}
+                    </td>
                     <td>{recs.length ? <span className="badge badge-solved">{recs.length} 次猜中</span> : ''}</td>
                   </tr>
                 );

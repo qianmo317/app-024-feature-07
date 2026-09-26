@@ -1,6 +1,7 @@
 // 集中式应用状态：数据读写全部在此，UI 只做展示与动作调用
-import type { AppSettings, OnsiteRecord, Riddle } from '../types';
+import type { AppSettings, ManualReview, OnsiteRecord, ReviewVerdict, Riddle } from '../types';
 import { validateRiddle } from './validate';
+import { reviewBasisOf, reviewConflicts } from './review';
 import { EMPTY_CTX, loadDataCtx, type DataCtx } from './datafiles';
 import * as idb from './idb';
 import { formatDate } from './format';
@@ -90,7 +91,7 @@ class AppStore {
     return this.state.riddles.reduce((m, r) => Math.max(m, r.no), 0) + 1;
   }
 
-  /** 新增/保存：自动计算谜格校验结果 */
+  /** 新增/保存：自动重算谜格校验；人工复核结论保留（内容若变更会自然失效，见 review.ts） */
   async saveRiddle(patch: Omit<Riddle, 'id' | 'no' | 'check'> & { id?: string; no?: number }): Promise<Riddle> {
     const id = patch.id ?? uid();
     const existing = patch.id ? this.state.riddles.find((r) => r.id === patch.id) : undefined;
@@ -100,7 +101,7 @@ class AppStore {
       ...patch,
       id,
       no,
-      check: { ...check, checkedAt: Date.now() },
+      check: { ...check, checkedAt: Date.now(), review: existing?.check.review ?? null },
       tags: patch.tags ?? [],
       difficulty: patch.difficulty ?? 2,
     };
@@ -134,14 +135,46 @@ class AppStore {
     return riddles.length;
   }
 
-  async recheckAll(): Promise<void> {
+  /** 重新校验全部：只刷新自动结论，人工复核保留；返回统计供设置页提示 */
+  async recheckAll(): Promise<{ total: number; kept: number; conflicts: number }> {
     const now = Date.now();
     const riddles = this.state.riddles.map((r) => ({
       ...r,
-      check: { ...validateRiddle(r, this.state.ctx), checkedAt: now },
+      check: { ...validateRiddle(r, this.state.ctx), checkedAt: now, review: r.check.review ?? null },
     }));
     this.state.riddles = riddles.sort((a, b) => a.no - b.no);
     await idb.putMany(idb.STORE_RIDDLES, riddles);
+    this.emit();
+    return {
+      total: riddles.length,
+      kept: riddles.filter((r) => r.check.review).length,
+      conflicts: riddles.filter((r) => reviewConflicts(r)).length,
+    };
+  }
+
+  /** 人工复核：判为通过 / 改判不通过，必须填理由与署名；重算时保留 */
+  async reviewRiddle(id: string, input: { verdict: ReviewVerdict; reason: string; reviewer: string }): Promise<Riddle> {
+    const r = this.state.riddles.find((x) => x.id === id);
+    if (!r) throw new Error('谜条不存在（可能已删除）');
+    const reason = input.reason.trim();
+    const reviewer = input.reviewer.trim();
+    if (!reason) throw new Error('请填写判定理由');
+    if (!reviewer) throw new Error('请填写署名');
+    const review: ManualReview = { verdict: input.verdict, reason, reviewer, at: Date.now(), basis: reviewBasisOf(r) };
+    const next: Riddle = { ...r, check: { ...r.check, review } };
+    this.state.riddles = this.state.riddles.map((x) => (x.id === id ? next : x));
+    await idb.put(idb.STORE_RIDDLES, next);
+    this.emit();
+    return next;
+  }
+
+  /** 撤销人工判定：回到自动结论 */
+  async clearReview(id: string): Promise<void> {
+    const r = this.state.riddles.find((x) => x.id === id);
+    if (!r || !r.check.review) return;
+    const next: Riddle = { ...r, check: { ...r.check, review: null } };
+    this.state.riddles = this.state.riddles.map((x) => (x.id === id ? next : x));
+    await idb.put(idb.STORE_RIDDLES, next);
     this.emit();
   }
 

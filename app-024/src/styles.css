@@ -144,6 +144,17 @@ tbody tr:hover { background: #fdfaf2; }
 .check-pass li::marker { content: "✓ "; color: var(--ok); }
 .check-suspect li::marker { content: "？ "; color: var(--warn); }
 .check-fail li::marker { content: "✕ "; color: var(--bad); }
+
+/* ---- 人工复核 ---- */
+.badge-review { background: #e9eefb; color: #2d4d8f; border-color: #c6d3ee; margin-left: 4px; }
+.review-block {
+  border: 1px solid #c6d3ee; border-left: 4px solid #2d4d8f; border-radius: 8px;
+  background: #f5f8fd; padding: 8px 12px; margin: 6px 0 10px; font-size: 14px;
+}
+.review-block p { margin: 4px 0; }
+.review-stale { border-color: var(--line); border-left-color: var(--muted); background: #faf7f0; }
+.review-form { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 8px; }
+.review-form .btn-row { margin-bottom: 8px; }
 .dup-list { margin: 6px 0; padding-left: 18px; }
 .dup-list li { margin-bottom: 4px; }
 .pager { display: flex; gap: 14px; align-items: center; justify-content: center; margin: 14px 0; }

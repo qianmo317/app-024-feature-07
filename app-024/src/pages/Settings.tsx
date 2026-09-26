@@ -50,6 +50,16 @@ export function Settings() {
     setNotice('谜库已清空');
   };
 
+  const recheckAll = async () => {
+    const s = await store.recheckAll();
+    setNotice(
+      `已重新校验全部 ${s.total} 条谜格，保留人工复核 ${s.kept} 条` +
+      (s.conflicts
+        ? `，其中 ${s.conflicts} 条与自动结论不一致（谜库页校验筛选选「人工改判」可查看）。`
+        : '。'),
+    );
+  };
+
   return (
     <div>
       <div className="page-head"><h1>设置</h1></div>
@@ -111,7 +121,7 @@ export function Settings() {
         <div className="panel">
           <h3>数据管理</h3>
           <div className="btn-row wrap">
-            <button className="btn" onClick={() => void store.recheckAll().then(() => setNotice('已重新校验全部谜格'))}>🔄 重新校验全部谜格</button>
+            <button className="btn" onClick={() => void recheckAll()}>🔄 重新校验全部谜格</button>
             <button className="btn" onClick={exportRiddles}>⬇ 导出谜库 CSV（UTF-8 BOM）</button>
             <button className="btn" onClick={exportRecords}>⬇ 导出现场登记表 CSV（UTF-8 BOM）</button>
           </div>
@@ -120,6 +130,7 @@ export function Settings() {
             <button className="btn btn-danger" onClick={() => void clearRiddles()}>清空谜库（{state.riddles.length}）</button>
           </div>
           <p className="muted small">谜库 CSV 导入在「谜库」页右上角；示例文件见 <a href={`${import.meta.env.BASE_URL}samples/riddles.csv`} download>riddles.csv</a>。全部数据保存在本机 IndexedDB，导出文件请自行留存。</p>
+          <p className="muted small">「重新校验全部谜格」只重算自动结论，已做人工复核的判定会保留；与自动结论不一致的条目可在谜库页按「人工改判」筛出。</p>
         </div>
       </div>
     </div>
