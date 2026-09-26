@@ -1,6 +1,7 @@
 // 集中式应用状态：数据读写全部在此，UI 只做展示与动作调用
-import type { AppSettings, OnsiteRecord, Riddle } from '../types';
+import type { AppSettings, OnsiteRecord, Review, Riddle } from '../types';
 import { validateRiddle } from './validate';
+import { isDivergent } from './review';
 import { EMPTY_CTX, loadDataCtx, type DataCtx } from './datafiles';
 import * as idb from './idb';
 import { formatDate } from './format';
@@ -90,12 +91,16 @@ class AppStore {
     return this.state.riddles.reduce((m, r) => Math.max(m, r.no), 0) + 1;
   }
 
-  /** 新增/保存：自动计算谜格校验结果 */
-  async saveRiddle(patch: Omit<Riddle, 'id' | 'no' | 'check'> & { id?: string; no?: number }): Promise<Riddle> {
+  /** 新增/保存：自动重算谜格校验；内容未变时保留人工复核结论 */
+  async saveRiddle(patch: Omit<Riddle, 'id' | 'no' | 'check' | 'review'> & { id?: string; no?: number }): Promise<Riddle> {
     const id = patch.id ?? uid();
     const existing = patch.id ? this.state.riddles.find((r) => r.id === patch.id) : undefined;
     const no = patch.no ?? existing?.no ?? this.nextNo();
     const check = validateRiddle(patch, this.state.ctx);
+    // 人工结论只针对当时的谜面/谜底/谜目/谜格：内容未动则保留，改了则失效需重新复核
+    const keepReview = existing?.review
+      && patch.surface === existing.surface && patch.answer === existing.answer
+      && patch.category === existing.category && patch.format === existing.format;
     const riddle: Riddle = {
       ...patch,
       id,
@@ -104,6 +109,7 @@ class AppStore {
       tags: patch.tags ?? [],
       difficulty: patch.difficulty ?? 2,
     };
+    if (keepReview) riddle.review = existing!.review;
     if (existing) {
       this.state.riddles = this.state.riddles.map((r) => (r.id === id ? riddle : r));
     } else {
@@ -116,7 +122,7 @@ class AppStore {
   }
 
   /** 批量导入（去重后的新增项） */
-  async addRiddles(items: (Omit<Riddle, 'id' | 'no' | 'check'> & Partial<Pick<Riddle, 'no'>>)[]): Promise<number> {
+  async addRiddles(items: (Omit<Riddle, 'id' | 'no' | 'check' | 'review'> & Partial<Pick<Riddle, 'no'>>)[]): Promise<number> {
     if (!items.length) return 0;
     let no = this.nextNo();
     const now = Date.now();
@@ -134,7 +140,8 @@ class AppStore {
     return riddles.length;
   }
 
-  async recheckAll(): Promise<void> {
+  /** 全库重算自动校验：人工复核结论一律保留，并统计与自动结果不一致的条数 */
+  async recheckAll(): Promise<{ total: number; keptReview: number; divergent: number }> {
     const now = Date.now();
     const riddles = this.state.riddles.map((r) => ({
       ...r,
@@ -142,6 +149,37 @@ class AppStore {
     }));
     this.state.riddles = riddles.sort((a, b) => a.no - b.no);
     await idb.putMany(idb.STORE_RIDDLES, riddles);
+    this.emit();
+    const reviewed = riddles.filter((r) => r.review);
+    return { total: riddles.length, keptReview: reviewed.length, divergent: reviewed.filter(isDivergent).length };
+  }
+
+  // ---- 人工复核 ----
+  /** 对「存疑」条目留下人工结论（通过/不通过），必须填写理由与署名 */
+  async reviewRiddle(id: string, input: { verdict: 'pass' | 'fail'; reason: string; reviewer: string }): Promise<Riddle> {
+    const r = this.state.riddles.find((x) => x.id === id);
+    if (!r) throw new Error('找不到该谜条');
+    if (r.check.verdict !== 'suspect') throw new Error('只有自动结论为「存疑」的条目才能人工复核');
+    const reason = input.reason.trim();
+    const reviewer = input.reviewer.trim();
+    if (!reason) throw new Error('人工复核必须填写理由');
+    if (!reviewer) throw new Error('人工复核必须填写署名');
+    const review: Review = { verdict: input.verdict, reason, reviewer, at: Date.now(), autoVerdict: r.check.verdict };
+    const next: Riddle = { ...r, review };
+    this.state.riddles = this.state.riddles.map((x) => (x.id === id ? next : x));
+    await idb.put(idb.STORE_RIDDLES, next);
+    this.emit();
+    return next;
+  }
+
+  /** 撤销人工结论，回到自动校验结果 */
+  async clearReview(id: string): Promise<void> {
+    const r = this.state.riddles.find((x) => x.id === id);
+    if (!r?.review) return;
+    const next: Riddle = { ...r };
+    delete next.review;
+    this.state.riddles = this.state.riddles.map((x) => (x.id === id ? next : x));
+    await idb.put(idb.STORE_RIDDLES, next);
     this.emit();
   }
 

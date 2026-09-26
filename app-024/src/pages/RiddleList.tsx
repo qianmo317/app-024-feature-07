@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useAppState, navigate } from '../ui/router';
 import { VerdictBadge, Stars } from '../ui/bits';
 import { EMPTY_FILTERS, filterRiddles, allTags, type RiddleFilters } from '../lib/search';
+import { effectiveVerdict, isDivergent } from '../lib/review';
 import { scanDuplicates, type DupMatch } from '../lib/duplicates';
 import { importPreview, riddleToRow, stringifyCSV, withBOM, RIDDLE_CSV_HEADERS, type ImportPreview } from '../lib/csv';
 import { CATEGORY_LABEL, FORMAT_LABEL, VERDICT_LABEL, type Riddle, type Verdict } from '../types';
@@ -22,6 +23,7 @@ export function RiddleList() {
 
   const filtered = useMemo(() => filterRiddles(state.riddles, filters), [state.riddles, filters]);
   const tags = useMemo(() => allTags(state.riddles), [state.riddles]);
+  const divergentCount = useMemo(() => state.riddles.filter(isDivergent).length, [state.riddles]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const rows = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
@@ -124,6 +126,7 @@ export function RiddleList() {
         <select className="input" value={filters.verdict} onChange={(e) => setF({ verdict: e.target.value as RiddleFilters['verdict'] })}>
           <option value="">全部校验</option>
           {(Object.keys(VERDICT_LABEL) as Verdict[]).map((k) => <option key={k} value={k}>{VERDICT_LABEL[k]}</option>)}
+          <option value="divergent">人工与自动不一致</option>
         </select>
         {tags.length > 0 && (
           <select className="input" value={filters.tag} onChange={(e) => setF({ tag: e.target.value })}>
@@ -144,6 +147,13 @@ export function RiddleList() {
         <button className="btn btn-danger" disabled={!selected.size} onClick={batchDelete}>删除选中</button>
         {selected.size > 0 && <button className="btn btn-ghost" onClick={() => store.clearSelection()}>取消选中（{selected.size}）</button>}
       </div>
+
+      {divergentCount > 0 && filters.verdict !== 'divergent' && (
+        <div className="notice review-notice">
+          ⚖ 有 {divergentCount} 条谜的人工结论与自动校验不一致。
+          <button className="btn btn-sm" onClick={() => setF({ verdict: 'divergent' })}>单独列出</button>
+        </div>
+      )}
 
       {preview && (
         <div className="panel panel-import">
@@ -251,7 +261,15 @@ export function RiddleList() {
                     <td>{CATEGORY_LABEL[r.category]}</td>
                     <td>{r.format === 'none' ? '' : FORMAT_LABEL[r.format]}</td>
                     <td><Stars n={r.difficulty} /></td>
-                    <td><VerdictBadge verdict={r.check.verdict} /></td>
+                    <td>
+                      <VerdictBadge verdict={effectiveVerdict(r)} />
+                      {r.review && (
+                        <span
+                          className="badge badge-review"
+                          title={`人工复核：${r.review.reviewer} · ${formatDateTime(r.review.at)}\n理由：${r.review.reason}\n自动结论：${VERDICT_LABEL[r.check.verdict]}`}
+                        >人工</span>
+                      )}
+                    </td>
                     <td>{recs.length ? <span className="badge badge-solved">{recs.length} 次猜中</span> : ''}</td>
                   </tr>
                 );

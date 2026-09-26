@@ -7,6 +7,15 @@ export type RiddleCategory = 'char' | 'object' | 'idiom' | 'place' | 'person' | 
 export type AgeGroup = 'child' | 'teen' | 'adult' | 'all';
 export type Verdict = 'pass' | 'suspect' | 'fail';
 
+/** 人工复核结论：对自动校验「存疑」的条目，由懂谜的人判为通过或不通过 */
+export type Review = {
+  verdict: 'pass' | 'fail'; // 人工只能放行（通过）或改判不通过
+  reason: string;           // 复核理由（必填）
+  reviewer: string;         // 署名（必填）
+  at: number;               // 判定时间
+  autoVerdict: Verdict;     // 判定当时的自动结论（审计留痕）
+};
+
 export type Riddle = {
   id: string;
   no: number;            // 谜号（现场对号、谜条大字）
@@ -22,6 +31,7 @@ export type Riddle = {
   tags: string[];
   note?: string;
   check: { verdict: Verdict; reasons: string[]; checkedAt: number };
+  review?: Review;       // 人工复核结论；存在时优先于自动结论，重算不覆盖
 };
 
 export type OnsiteRecord = {

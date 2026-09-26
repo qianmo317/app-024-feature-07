@@ -200,6 +200,49 @@ test.describe('元宵灯谜库 E2E', () => {
     }
   });
 
+  test('人工复核：存疑判为通过 → 重算保留 → 单独列出 → 撤销回自动', async ({ page }) => {
+    await importSample(page);
+    // 秋千格正例「今天→日本」自动结论为存疑
+    await page.click('a.surface-link:has-text("今天")');
+    await expect(page.locator('.review-form')).toBeVisible();
+    // 理由与署名必填：未填时提交按钮不可用
+    await expect(page.locator('button:has-text("提交人工复核")')).toBeDisabled();
+    await page.fill('.review-form textarea', '倒读「本日」与谜面「今天」扣合成立');
+    await expect(page.locator('button:has-text("提交人工复核")')).toBeDisabled();
+    await page.fill('.review-form input.input', '张老师');
+    await page.click('button:has-text("提交人工复核")');
+    // 留痕：结论、署名、时间、理由
+    await expect(page.locator('.review-box')).toContainText('张老师');
+    await expect(page.locator('.review-box')).toContainText('扣合成立');
+    await expect(page.locator('.review-box .verdict-pass')).toBeVisible();
+    await expect(page.locator('.review-head')).toContainText('人工结论');
+    // 列表：有效结论为通过 + 人工徽标；不一致条目可单独列出
+    await page.click('a:has-text("返回谜库")');
+    const row = page.locator('tr', { hasText: '今天' });
+    await expect(row.locator('.verdict-pass')).toBeVisible();
+    await expect(row.locator('.badge-review')).toBeVisible();
+    await expect(page.locator('.review-notice')).toContainText('1 条');
+    await page.click('button:has-text("单独列出")');
+    await expect(page.locator('.riddle-table tbody tr')).toHaveCount(1);
+    // 设置页全库重算：人工结论保留且被统计
+    await page.click('nav >> text=设置');
+    await page.click('button:has-text("重新校验全部谜格")');
+    await expect(page.locator('.notice')).toContainText('保留 1 条人工结论');
+    await expect(page.locator('.notice')).toContainText('1 条与自动结果不一致');
+    // 重算后再回列表：人工结论仍在（核心回归）
+    await page.click('nav >> text=谜库');
+    await expect(page.locator('tr', { hasText: '今天' }).locator('.badge-review')).toBeVisible();
+    // 撤销人工结论 → 回到自动结果（存疑）
+    await page.click('a.surface-link:has-text("今天")');
+    page.once('dialog', (d) => d.accept());
+    await page.click('button:has-text("撤销人工结论")');
+    await expect(page.locator('.review-form')).toBeVisible();
+    await page.click('a:has-text("返回谜库")');
+    const rowAfter = page.locator('tr', { hasText: '今天' });
+    await expect(rowAfter.locator('.verdict-suspect')).toBeVisible();
+    await expect(rowAfter.locator('.badge-review')).toHaveCount(0);
+  });
+
   test('不存在的谜条 id：容错面板而非白屏', async ({ page }) => {
     await page.goto('/#/riddle/nonexist');
     await expect(page.locator('.empty')).toContainText('找不到该谜条');

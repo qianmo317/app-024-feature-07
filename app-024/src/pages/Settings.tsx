@@ -44,6 +44,14 @@ export function Settings() {
     await store.clearRecords();
     setNotice('现场登记已清空');
   };
+  const recheckAll = async () => {
+    const r = await store.recheckAll();
+    setNotice(
+      `已重新校验全部谜格（${r.total} 条）`
+      + (r.keptReview ? `，保留 ${r.keptReview} 条人工结论` : '')
+      + (r.divergent ? `，其中 ${r.divergent} 条与自动结果不一致（可在谜库按「人工与自动不一致」筛选）` : ''),
+    );
+  };
   const clearRiddles = async () => {
     if (!confirm(`确定清空谜库全部 ${state.riddles.length} 条谜？此操作不可恢复。`)) return;
     await store.clearRiddles();
@@ -111,7 +119,7 @@ export function Settings() {
         <div className="panel">
           <h3>数据管理</h3>
           <div className="btn-row wrap">
-            <button className="btn" onClick={() => void store.recheckAll().then(() => setNotice('已重新校验全部谜格'))}>🔄 重新校验全部谜格</button>
+            <button className="btn" onClick={() => void recheckAll()}>🔄 重新校验全部谜格</button>
             <button className="btn" onClick={exportRiddles}>⬇ 导出谜库 CSV（UTF-8 BOM）</button>
             <button className="btn" onClick={exportRecords}>⬇ 导出现场登记表 CSV（UTF-8 BOM）</button>
           </div>
